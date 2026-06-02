@@ -10,7 +10,7 @@ import { registerBidder } from '../src/adapters/bidderFactory.js';
 
 const BIDDER_CODE = 'fluct';
 const END_POINT = 'https://hb.adingo.jp/prebid/';
-const VERSION = '1.3';
+const VERSION = '1.6';
 const NET_REVENUE = true;
 const TTL = 300;
 const DEFAULT_CURRENCY = 'JPY';
@@ -112,12 +112,35 @@ export const spec = {
   buildRequests: (validBidRequests, bidderRequest) => {
     const serverRequests = [];
     const page = bidderRequest.refererInfo.page;
+    const wrapperName = config.getConfig('fluct')?.wrapperName;
+    const customHeaders = {
+      'x-fluct-app': 'prebid/fluctBidAdapter',
+      'x-fluct-version': VERSION,
+      'x-openrtb-version': 2.5,
+    };
+    if (wrapperName) {
+      customHeaders['x-fluct-prebid-wrapper'] = wrapperName;
+    }
 
     _each(validBidRequests, (request) => {
       const impExt = request.ortb2Imp?.ext;
       const data = {};
 
       data.page = page;
+
+      const ortb2Site = bidderRequest.ortb2?.site;
+      if (ortb2Site) {
+        data.site = {};
+        if (ortb2Site.cat) data.site.cat = ortb2Site.cat;
+        if (ortb2Site.sectioncat) data.site.sectioncat = ortb2Site.sectioncat;
+        if (ortb2Site.pagecat) data.site.pagecat = ortb2Site.pagecat;
+        if (ortb2Site.keywords) data.site.keywords = ortb2Site.keywords;
+        if (ortb2Site.content) data.site.content = ortb2Site.content;
+        if (ortb2Site.domain) data.site.domain = ortb2Site.domain;
+        if (ortb2Site.ref) data.site.ref = ortb2Site.ref;
+        if (ortb2Site.ext?.data) data.site.ext = { data: ortb2Site.ext.data };
+      }
+
       data.adUnitCode = request.adUnitCode;
       data.bidId = request.bidId;
       data.user = {
@@ -131,6 +154,9 @@ export const spec = {
       if (impExt) {
         data.transactionId = impExt.tid;
         data.gpid = impExt.gpid ?? impExt.data?.adserver?.adslot;
+        if (impExt.data) {
+          deepSetValue(data, 'imp.ext.data', impExt.data);
+        }
       }
       if (bidderRequest.gdprConsent) {
         deepSetValue(data, 'regs.gdpr', {
@@ -187,6 +213,29 @@ export const spec = {
 
       data.instl = deepAccess(request, 'ortb2Imp.instl') === 1 || request.params.instl === 1 ? 1 : 0;
 
+      if (deepAccess(request, 'ortb2Imp.rwdd') === 1) data.rwdd = 1;
+
+      const pos = deepAccess(request, 'mediaTypes.banner.pos') ?? deepAccess(request, 'ortb2Imp.ext.data.pos');
+      if (pos != null) data.pos = pos;
+
+      const ortb2Device = bidderRequest.ortb2?.device;
+      if (ortb2Device) {
+        data.device = {};
+        if (ortb2Device.sua) data.device.sua = ortb2Device.sua;
+        if (ortb2Device.ua) data.device.ua = ortb2Device.ua;
+        if (ortb2Device.w) data.device.w = ortb2Device.w;
+        if (ortb2Device.h) data.device.h = ortb2Device.h;
+        if (ortb2Device.language) data.device.language = ortb2Device.language;
+        if (ortb2Device.devicetype) data.device.devicetype = ortb2Device.devicetype;
+        const vpw = ortb2Device.ext?.vpw;
+        const vph = ortb2Device.ext?.vph;
+        if (vpw != null || vph != null) {
+          data.device.ext = {};
+          if (vpw != null) data.device.ext.vpw = vpw;
+          if (vph != null) data.device.ext.vph = vph;
+        }
+      }
+
       // Set top-level bidfloor to the highest floor across all sizes
       const highestFloorData = getHighestBidFloor(request);
       if (highestFloorData) {
@@ -206,11 +255,7 @@ export const spec = {
         options: {
           contentType: 'application/json',
           withCredentials: true,
-          customHeaders: {
-            'x-fluct-app': 'prebid/fluctBidAdapter',
-            'x-fluct-version': VERSION,
-            'x-openrtb-version': 2.5
-          }
+          customHeaders,
         },
         data: data
       });
